@@ -10,7 +10,7 @@ import base64
 from PIL import Image
 import fitz  # PyMuPDF
 import json
-from google import genai
+from google import generativeai as genai
 from google.genai import types
 
 # Configuração da página Streamlit
@@ -95,13 +95,13 @@ def detect_tables_with_gemini(pdf_path, page_input=None):
             
             # Solicitar ao modelo Gemini para detectar e transcrever tabelas
             try:
-                model = client.models.get("gemini-2.0-flash")
+                model = genai.GenerativeModel('gemini-2.0-flash')
                 response = model.generate_content(
                     [
                         "Identifique e transcreva todas as tabelas nesta imagem. Formate a saída como um JSON com o seguinte formato: { 'tables': [ { 'headers': [coluna1, coluna2, ...], 'data': [ [valor1, valor2, ...], [valor1, valor2, ...], ... ] }, {...} ] }. O JSON deve conter apenas dados tabulares, sem descrições ou explicações adicionais.",
                         image
                     ],
-                    generation_config=types.GenerationConfig(
+                    generation_config=genai.types.GenerationConfig(
                         temperature=0.0,
                         max_output_tokens=4000,
                         top_p=1.0
