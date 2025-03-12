@@ -38,24 +38,49 @@ def extract_images_from_pdf_page(pdf_path, page_num):
     
     return encoded_img
 
+# Função para analisar a entrada de páginas e convertê-la em uma lista de números de página
+def parse_page_input(page_input, max_pages):
+    if not page_input or page_input.lower() == 'all':
+        return list(range(max_pages))
+    
+    page_numbers = []
+    parts = page_input.split(',')
+    
+    for part in parts:
+        if '-' in part:
+            # Range de páginas (ex: 5-9)
+            start, end = part.split('-')
+            try:
+                start = int(start.strip()) - 1  # Ajustar para indexação 0
+                end = int(end.strip())  # Fim inclusivo
+                page_numbers.extend(range(start, end))
+            except ValueError:
+                st.warning(f"Ignorando formato inválido de página: {part}")
+        else:
+            # Página única
+            try:
+                page_numbers.append(int(part.strip()) - 1)  # Ajustar para indexação 0
+            except ValueError:
+                st.warning(f"Ignorando formato inválido de página: {part}")
+    
+    # Filtrar páginas válidas
+    return [p for p in page_numbers if 0 <= p < max_pages]
+
 # Função para detectar e transcrever tabelas usando Groq VLM
-def detect_tables_with_groq(pdf_path, page_range=None):
+def detect_tables_with_groq(pdf_path, page_input=None):
     client = get_groq_client()
     doc = fitz.open(pdf_path)
+    max_pages = len(doc)
     
-    if page_range is None:
-        page_range = range(len(doc))
+    # Determinar quais páginas processar
+    if not page_input or page_input.lower() == 'all':
+        page_numbers = list(range(max_pages))
     else:
-        # Ajustar o range para as páginas especificadas
-        pages = [int(p) - 1 for p in page_range.split(',')]
-        page_range = pages
+        page_numbers = parse_page_input(page_input, max_pages)
     
     all_detected_tables = []
     
-    for page_num in page_range:
-        if page_num >= len(doc):
-            continue
-            
+    for page_num in page_numbers:
         st.info(f"Processando página {page_num + 1} com Groq VLM...")
         
         # Extrair imagem da página
@@ -120,9 +145,21 @@ def detect_tables_with_groq(pdf_path, page_range=None):
     
     return all_detected_tables
 
+# Função para converter string de páginas para formato Camelot
+def format_pages_for_camelot(page_input):
+    if not page_input or page_input.lower() == 'all':
+        return 'all'
+    
+    # Camelot aceita o formato "1,3,4-10"
+    return page_input
+
 # Função para extrair tabelas de um PDF usando Camelot
-def extract_tables_from_pdf(pdf_path, pages='all'):
+def extract_tables_from_pdf(pdf_path, page_input='all'):
     tables_list = []
+    
+    # Formatar a string de páginas para o Camelot
+    pages = format_pages_for_camelot(page_input)
+    
     try:
         lattice_tables = camelot.read_pdf(
             pdf_path, pages=pages, flavor='lattice', line_scale=40
@@ -248,7 +285,7 @@ if uploaded_file is not None:
         st.info("PDF carregado com sucesso! Iniciando extração de tabelas...")
         
         # Configuração de páginas
-        pages_to_process = 'all' if not page_input else page_input
+        page_str = page_input if page_input else 'all'
         
         # Listas para armazenar os resultados
         all_tables = []
@@ -257,7 +294,7 @@ if uploaded_file is not None:
         # Extração com Camelot (método tradicional)
         if extraction_method in ["Camelot (Tradicional)", "Ambos (combinado)"]:
             st.info("Extraindo tabelas com Camelot...")
-            camelot_tables = extract_tables_from_pdf(temp_path, pages=pages_to_process)
+            camelot_tables = extract_tables_from_pdf(temp_path, page_str)
             processed_camelot_tables = process_tables(camelot_tables)
             
             for i, df in enumerate(processed_camelot_tables):
@@ -273,7 +310,7 @@ if uploaded_file is not None:
         # Extração com Groq VLM
         if extraction_method in ["Groq VLM (IA para tabelas complexas)", "Ambos (combinado)"]:
             st.info("Extraindo tabelas com Groq VLM...")
-            groq_detected_tables = detect_tables_with_groq(temp_path, pages_to_process)
+            groq_detected_tables = detect_tables_with_groq(temp_path, page_str)
             processed_groq_tables = process_groq_tables(groq_detected_tables)
             
             for i, table_info in enumerate(processed_groq_tables):
