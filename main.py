@@ -8,9 +8,10 @@ import numpy as np
 import re
 import base64
 from PIL import Image
-from groq import Groq
 import fitz  # PyMuPDF
 import json
+from google import genai
+from google.genai import types
 
 # Configuração da página Streamlit
 st.set_page_config(
@@ -19,10 +20,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Inicializar o cliente Groq
+# Inicializar o cliente Gemini
 @st.cache_resource
-def get_groq_client():
-    return Groq(api_key=st.secrets.get("GROQ_API_KEY", "seu_api_key_aqui"))
+def get_gemini_client():
+    return genai.Client(api_key=st.secrets.get("GEMINI_API_KEY", "seu_api_key_aqui"))
 
 # Função para extrair imagens de uma página PDF
 def extract_images_from_pdf_page(pdf_path, page_num):
@@ -31,12 +32,12 @@ def extract_images_from_pdf_page(pdf_path, page_num):
     
     # Renderizar a página como uma imagem com alta resolução
     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-    img_data = pix.tobytes("png")
     
-    # Codificar a imagem em base64 para enviar ao Groq
-    encoded_img = base64.b64encode(img_data).decode('utf-8')
+    # Salvar como imagem temporária para usar com o Gemini
+    temp_img_path = f"temp_page_{page_num}.png"
+    pix.save(temp_img_path)
     
-    return encoded_img
+    return temp_img_path
 
 # Função para analisar a entrada de páginas e convertê-la em uma lista de números de página
 def parse_page_input(page_input, max_pages):
@@ -66,9 +67,9 @@ def parse_page_input(page_input, max_pages):
     # Filtrar páginas válidas
     return [p for p in page_numbers if 0 <= p < max_pages]
 
-# Função para detectar e transcrever tabelas usando Groq VLM
-def detect_tables_with_groq(pdf_path, page_input=None):
-    client = get_groq_client()
+# Função para detectar e transcrever tabelas usando Gemini VLM
+def detect_tables_with_gemini(pdf_path, page_input=None):
+    client = get_gemini_client()
     doc = fitz.open(pdf_path)
     max_pages = len(doc)
     
@@ -79,69 +80,73 @@ def detect_tables_with_groq(pdf_path, page_input=None):
         page_numbers = parse_page_input(page_input, max_pages)
     
     all_detected_tables = []
+    temp_files = []  # Lista para rastrear arquivos temporários
     
     for page_num in page_numbers:
-        st.info(f"Processando página {page_num + 1} com Groq VLM...")
+        st.info(f"Processando página {page_num + 1} com Gemini VLM...")
         
         # Extrair imagem da página
-        encoded_img = extract_images_from_pdf_page(pdf_path, page_num)
+        temp_img_path = extract_images_from_pdf_page(pdf_path, page_num)
+        temp_files.append(temp_img_path)
         
-        # Solicitar ao modelo Groq para detectar e transcrever tabelas
+        # Abrir imagem para o Gemini
         try:
-            completion = client.chat.completions.create(
-                model="llama-3.2-90b-vision-preview",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Identifique e transcreva todas as tabelas nesta imagem. Formate a saída como um JSON com o seguinte formato: { 'tables': [ { 'headers': [coluna1, coluna2, ...], 'data': [ [valor1, valor2, ...], [valor1, valor2, ...], ... ] }, {...} ] }. O JSON deve conter apenas dados tabulares, sem descrições ou explicações adicionais."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{encoded_img}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                temperature=0,  # Usar temperatura baixa para resultados mais precisos
-                max_completion_tokens=4000,
-                top_p=1,
-                stream=False,
-            )
+            image = Image.open(temp_img_path)
             
-            response_text = completion.choices[0].message.content
-            
-            # Extrair a parte JSON da resposta
-            json_start = response_text.find("{")
-            json_end = response_text.rfind("}") + 1
-            
-            if json_start >= 0 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                try:
-                    detected_tables = json.loads(json_str)
+            # Solicitar ao modelo Gemini para detectar e transcrever tabelas
+            try:
+                model = client.models.get("gemini-2.0-flash")
+                response = model.generate_content(
+                    [
+                        "Identifique e transcreva todas as tabelas nesta imagem. Formate a saída como um JSON com o seguinte formato: { 'tables': [ { 'headers': [coluna1, coluna2, ...], 'data': [ [valor1, valor2, ...], [valor1, valor2, ...], ... ] }, {...} ] }. O JSON deve conter apenas dados tabulares, sem descrições ou explicações adicionais.",
+                        image
+                    ],
+                    generation_config=types.GenerationConfig(
+                        temperature=0.0,
+                        max_output_tokens=4000,
+                        top_p=1.0
+                    )
+                )
+                
+                response_text = response.text
+                
+                # Extrair a parte JSON da resposta
+                json_start = response_text.find("{")
+                json_end = response_text.rfind("}") + 1
+                
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    try:
+                        detected_tables = json.loads(json_str)
+                        
+                        # Verificar se o formato é o esperado
+                        if 'tables' in detected_tables:
+                            # Converter cada tabela para DataFrame
+                            for i, table in enumerate(detected_tables['tables']):
+                                if 'headers' in table and 'data' in table:
+                                    df = pd.DataFrame(table['data'], columns=table['headers'])
+                                    all_detected_tables.append({
+                                        'page': page_num + 1,
+                                        'table_index': i + 1,
+                                        'dataframe': df
+                                    })
+                    except json.JSONDecodeError:
+                        st.warning(f"Não foi possível analisar o JSON na página {page_num + 1}.")
+                else:
+                    st.warning(f"Nenhuma tabela encontrada na página {page_num + 1} ou formato de resposta inválido.")
                     
-                    # Verificar se o formato é o esperado
-                    if 'tables' in detected_tables:
-                        # Converter cada tabela para DataFrame
-                        for i, table in enumerate(detected_tables['tables']):
-                            if 'headers' in table and 'data' in table:
-                                df = pd.DataFrame(table['data'], columns=table['headers'])
-                                all_detected_tables.append({
-                                    'page': page_num + 1,
-                                    'table_index': i + 1,
-                                    'dataframe': df
-                                })
-                except json.JSONDecodeError:
-                    st.warning(f"Não foi possível analisar o JSON na página {page_num + 1}.")
-            else:
-                st.warning(f"Nenhuma tabela encontrada na página {page_num + 1} ou formato de resposta inválido.")
+            except Exception as e:
+                st.error(f"Erro ao processar a página {page_num + 1} com Gemini VLM: {str(e)}")
                 
         except Exception as e:
-            st.error(f"Erro ao processar a página {page_num + 1} com Groq VLM: {str(e)}")
+            st.error(f"Erro ao abrir a imagem da página {page_num + 1}: {str(e)}")
+            
+    # Limpar arquivos temporários
+    for temp_file in temp_files:
+        try:
+            os.remove(temp_file)
+        except:
+            pass
     
     return all_detected_tables
 
@@ -227,8 +232,8 @@ def process_tables(tables):
             processed_dfs.append(pd.DataFrame({'Erro': [f"Não foi possível processar tabela {i+1}: {str(e)}"]}))
     return processed_dfs
 
-# Função para processar os DataFrames detectados pelo Groq
-def process_groq_tables(detected_tables):
+# Função para processar os DataFrames detectados pelo Gemini
+def process_gemini_tables(detected_tables):
     processed_dfs = []
     for i, table_info in enumerate(detected_tables):
         try:
@@ -243,7 +248,7 @@ def process_groq_tables(detected_tables):
                 'dataframe': df
             })
         except Exception as e:
-            st.error(f"Erro ao processar tabela {i+1} do Groq: {str(e)}")
+            st.error(f"Erro ao processar tabela {i+1} do Gemini: {str(e)}")
             processed_dfs.append({
                 'page': table_info['page'],
                 'table_index': table_info['table_index'],
@@ -255,13 +260,13 @@ def process_groq_tables(detected_tables):
 st.title("Conversor de PDF para Excel - Extração de Tabelas")
 st.markdown("""
 Este aplicativo extrai tabelas de arquivos PDF e as converte para o formato Excel.
-Utiliza o modelo de visão Groq VLM para melhorar a detecção de tabelas complexas.
+Utiliza o modelo de visão Gemini VLM para melhorar a detecção de tabelas complexas.
 """)
 
 with st.expander("Configurações Avançadas", expanded=True):
     extraction_method = st.radio(
         "Método de extração:",
-        ["Camelot (Tradicional)", "Groq VLM (IA para tabelas complexas)", "Ambos (combinado)"]
+        ["Camelot (Tradicional)", "Gemini VLM (IA para tabelas complexas)", "Ambos (combinado)"]
     )
     
     page_input = st.text_input(
@@ -289,7 +294,7 @@ if uploaded_file is not None:
         
         # Listas para armazenar os resultados
         all_tables = []
-        all_groq_tables = []
+        all_gemini_tables = []
         
         # Extração com Camelot (método tradicional)
         if extraction_method in ["Camelot (Tradicional)", "Ambos (combinado)"]:
@@ -307,25 +312,25 @@ if uploaded_file is not None:
             progress_bar.progress(50)
             st.success(f"Foram encontradas {len(camelot_tables)} tabelas com Camelot!")
         
-        # Extração com Groq VLM
-        if extraction_method in ["Groq VLM (IA para tabelas complexas)", "Ambos (combinado)"]:
-            st.info("Extraindo tabelas com Groq VLM...")
-            groq_detected_tables = detect_tables_with_groq(temp_path, page_str)
-            processed_groq_tables = process_groq_tables(groq_detected_tables)
+        # Extração com Gemini VLM
+        if extraction_method in ["Gemini VLM (IA para tabelas complexas)", "Ambos (combinado)"]:
+            st.info("Extraindo tabelas com Gemini VLM...")
+            gemini_detected_tables = detect_tables_with_gemini(temp_path, page_str)
+            processed_gemini_tables = process_gemini_tables(gemini_detected_tables)
             
-            for i, table_info in enumerate(processed_groq_tables):
-                all_groq_tables.append({
-                    'source': 'Groq',
-                    'table_id': f"Groq_Pg{table_info['page']}_Tab{table_info['table_index']}",
+            for i, table_info in enumerate(processed_gemini_tables):
+                all_gemini_tables.append({
+                    'source': 'Gemini',
+                    'table_id': f"Gemini_Pg{table_info['page']}_Tab{table_info['table_index']}",
                     'page': table_info['page'],
                     'dataframe': table_info['dataframe']
                 })
             
             progress_bar.progress(80)
-            st.success(f"Foram encontradas {len(groq_detected_tables)} tabelas com Groq VLM!")
+            st.success(f"Foram encontradas {len(gemini_detected_tables)} tabelas com Gemini VLM!")
         
         # Combinar os resultados
-        combined_tables = all_tables + all_groq_tables
+        combined_tables = all_tables + all_gemini_tables
         
         if len(combined_tables) == 0:
             st.error("Não foi possível extrair tabelas deste PDF. Verifique se o arquivo contém tabelas visíveis.")
@@ -373,7 +378,5 @@ st.markdown("---")
 st.markdown("""
 ### Observações:
 - Esta aplicação utiliza a biblioteca Camelot para extração tradicional de tabelas.
-- O modelo Groq VLM é utilizado para detectar e transcrever tabelas complexas usando visão computacional.
-- Para usar o Groq VLM, você precisa configurar uma chave de API no arquivo de segredos do Streamlit.
-- Dependências adicionais: `groq`, `PyMuPDF (fitz)`, `PIL`
+- O modelo Gemini VLM da Google é utilizado para detectar e transcrever tabelas complexas usando visão computacional.
 """)

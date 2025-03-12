@@ -6,3 +6,6 @@ openpyxl
 groq
 PyMuPDF 
 pillow
+numpy
+google-generativeai
+pdf2image
