@@ -7,5 +7,5 @@ groq
 PyMuPDF 
 pillow
 numpy
-google-generativeai
+google-genai
 pdf2image
