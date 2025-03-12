@@ -3,3 +3,6 @@ pandas
 camelot-py
 opencv-python
 openpyxl
+groq
+PyMuPDF 
+pillow
