@@ -95,9 +95,10 @@ def detect_tables_with_gemini(pdf_path, page_input=None):
             
             # Solicitar ao modelo Gemini para detectar e transcrever tabelas
             try:
-                model = genai.GenerativeModel('gemini-2.0-flash')
-                response = model.generate_content(
-                    [
+                client = get_gemini_client()
+                response = client.models.generate_content(
+                     model="gemini-2.0-flash",
+                    contents=[
                         "Identifique e transcreva todas as tabelas nesta imagem. Formate a saída como um JSON com o seguinte formato: { 'tables': [ { 'headers': [coluna1, coluna2, ...], 'data': [ [valor1, valor2, ...], [valor1, valor2, ...], ... ] }, {...} ] }. O JSON deve conter apenas dados tabulares, sem descrições ou explicações adicionais.",
                         image
                     ],
