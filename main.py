@@ -102,7 +102,7 @@ def detect_tables_with_gemini(pdf_path, page_input=None):
                         "Identifique e transcreva todas as tabelas nesta imagem. Formate a saída como um JSON com o seguinte formato: { 'tables': [ { 'headers': [coluna1, coluna2, ...], 'data': [ [valor1, valor2, ...], [valor1, valor2, ...], ... ] }, {...} ] }. O JSON deve conter apenas dados tabulares, sem descrições ou explicações adicionais.",
                         image
                     ],
-                    generation_config=genai.types.GenerationConfig(
+                    generation_config=genai.types.GenerateContentConfig(
                         temperature=0.0,
                         max_output_tokens=4000,
                         top_p=1.0
