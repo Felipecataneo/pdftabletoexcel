@@ -10,7 +10,7 @@ import base64
 from PIL import Image
 import fitz  # PyMuPDF
 import json
-import google.generativeai as genai
+from google import genai
 from google.genai import types
 
 # Configuração da página Streamlit
