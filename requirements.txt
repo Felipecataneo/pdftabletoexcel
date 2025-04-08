@@ -8,4 +8,5 @@ PyMuPDF
 pillow
 numpy
 google-genai
+google-generativeai
 pdf2image
