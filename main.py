@@ -184,7 +184,7 @@ def detect_tables_with_gemini(pdf_path, page_input, api_key):
                 )
 
                 # 3. Call generate_content using the client
-                response = client.generate_content(  # Use client.generate_content
+                response = client.models.generate_content(  # Use client.generate_content
                     model=GEMINI_MODEL_NAME,         # Specify model here
                     contents=[prompt, image_part],   # Pass contents list
                     generation_config=genai.types.GenerationConfig(
