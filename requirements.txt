@@ -1,12 +1,8 @@
 streamlit
 pandas
-camelot-py
-opencv-python
-openpyxl
-groq
-PyMuPDF 
+pdfplumber
+PyMuPDF
 pillow
 numpy
+openpyxl
 google-genai
-google-generativeai
-pdf2image
